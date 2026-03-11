@@ -1,0 +1,27 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+*.whl
+
+.venv/
+venv/
+env/
+
+.pytest_cache/
+.coverage
+htmlcov/
+
+*.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# user config (generated at runtime)
+.lit-diag/
