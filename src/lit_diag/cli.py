@@ -25,10 +25,14 @@ console = Console()
 @click.group(invoke_without_command=True)
 @click.option("--version", is_flag=True, help="Show version and exit.")
 @click.option("--reset-config", "do_reset", is_flag=True, help="Re-prompt the role choice.")
+@click.option("--client", "client_flag", is_flag=True, help="Force client-friendly output.")
+@click.option("--staff", "staff_flag", is_flag=True, help="Force full engineer output.")
 @click.pass_context
-def cli(ctx, version, do_reset):
+def cli(ctx, version, do_reset, client_flag, staff_flag):
     """Lit-Diag by Lightning AI -- GPU cluster diagnostics made simple."""
     ctx.ensure_object(dict)
+    ctx.obj["client_flag"] = client_flag
+    ctx.obj["staff_flag"] = staff_flag
 
     if version:
         console.print(f"Lit-Diag by Lightning AI  v{__version__}")
@@ -44,6 +48,13 @@ def cli(ctx, version, do_reset):
     check_for_update(console)
 
     if ctx.invoked_subcommand is None:
+        # if --staff or --client passed at top level, set the role before shell
+        if staff_flag:
+            from lit_diag.engine.config import save_role
+            save_role(UserRole.STAFF)
+        elif client_flag:
+            from lit_diag.engine.config import save_role
+            save_role(UserRole.CLIENT)
         from lit_diag.shell import interactive_shell
         interactive_shell()
         raise SystemExit(0)
