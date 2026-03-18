@@ -108,9 +108,19 @@ def check_for_update(console) -> None:
     cache = _read_cache()
     now = time.time()
     last_check = cache.get("last_check", 0)
+    cached_remote = cache.get("remote_version")
 
-    if now - last_check < CHECK_INTERVAL:
-        remote = cache.get("remote_version")
+    # only use cache if it found a NEWER version last time;
+    # if the cached result was "no update", re-check every launch
+    # so we don't miss an update for an entire hour
+    cache_is_useful = (
+        cached_remote
+        and now - last_check < CHECK_INTERVAL
+        and _version_tuple(cached_remote) > _version_tuple(__version__)
+    )
+
+    if cache_is_useful:
+        remote = cached_remote
     else:
         remote = _fetch_remote_version()
         cache["last_check"] = now
