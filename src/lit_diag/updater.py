@@ -87,9 +87,6 @@ def check_for_update(console) -> None:
 
     Runs at most once per hour (cached). Skips silently on any error.
     """
-    # don't check if piped, non-interactive, or explicitly disabled
-    if not sys.stdout.isatty():
-        return
     if os.environ.get("LIT_DIAG_NO_UPDATE"):
         return
 
@@ -114,25 +111,39 @@ def check_for_update(console) -> None:
     except Exception:
         return
 
+    # always tell the user about the update
     console.print(
         f"\n  [bold yellow]Update available:[/bold yellow] "
         f"[dim]{__version__}[/dim] → [bold green]{remote}[/bold green]"
     )
 
-    try:
-        choice = console.input("  Update now? (Y/n): ").strip().lower()
-    except (EOFError, KeyboardInterrupt):
-        return
+    # only offer interactive update if we can prompt
+    interactive = sys.stdin.isatty() or sys.stdout.isatty()
+    if interactive:
+        try:
+            choice = console.input("  Update now? (Y/n): ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            console.print(
+                f"  [dim]Run: curl -fsSL https://raw.githubusercontent.com/"
+                f"JM-LAI/Lit-diag/main/get.sh | sudo bash[/dim]\n"
+            )
+            return
 
-    if choice in ("", "y", "yes"):
-        console.print("  [dim]Updating...[/dim]")
-        if _do_update():
-            console.print(
-                f"  [green]Updated to v{remote}.[/green] "
-                f"Restart lit-diag to use the new version.\n"
-            )
-        else:
-            console.print(
-                "  [red]Update failed.[/red] Try manually:\n"
-                f"  [dim]curl -fsSL https://raw.githubusercontent.com/JM-LAI/Lit-diag/main/get.sh | bash[/dim]\n"
-            )
+        if choice in ("", "y", "yes"):
+            console.print("  [dim]Updating...[/dim]")
+            if _do_update():
+                console.print(
+                    f"  [green]Updated to v{remote}.[/green] "
+                    f"Restart lit-diag to use the new version.\n"
+                )
+            else:
+                console.print(
+                    "  [red]Update failed.[/red] Try manually:\n"
+                    f"  [dim]curl -fsSL https://raw.githubusercontent.com/"
+                    f"JM-LAI/Lit-diag/main/get.sh | sudo bash[/dim]\n"
+                )
+    else:
+        console.print(
+            f"  [dim]Run: curl -fsSL https://raw.githubusercontent.com/"
+            f"JM-LAI/Lit-diag/main/get.sh | sudo bash[/dim]\n"
+        )
