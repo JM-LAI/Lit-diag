@@ -40,9 +40,27 @@ if [ "$PY_MAJOR" -lt 3 ] || { [ "$PY_MAJOR" -eq 3 ] && [ "$PY_MINOR" -lt 9 ]; };
     die "Python 3.9+ required (found $PY_VER)."
 fi
 
-python3 -m venv --help &>/dev/null 2>&1 || die "python3-venv not available. Install it: sudo apt install python3-venv"
+# auto-install missing system packages if we're root
+if ! python3 -m venv --help &>/dev/null 2>&1; then
+    if [ "$(id -u)" -eq 0 ]; then
+        info "Installing python3-venv..."
+        apt-get update -qq && apt-get install -y -qq "python${PY_VER}-venv" >/dev/null 2>&1 \
+            || apt-get install -y -qq python3-venv >/dev/null 2>&1 \
+            || die "Could not install python3-venv. Install manually: apt install python3-venv"
+    else
+        die "python3-venv not available. Run with sudo or: sudo apt install python3-venv"
+    fi
+fi
 
-command -v git &>/dev/null || die "git not found. Install git first."
+if ! command -v git &>/dev/null; then
+    if [ "$(id -u)" -eq 0 ]; then
+        info "Installing git..."
+        apt-get update -qq && apt-get install -y -qq git >/dev/null 2>&1 \
+            || die "Could not install git. Install manually: apt install git"
+    else
+        die "git not found. Run with sudo or: sudo apt install git"
+    fi
+fi
 
 # ── install / update ───────────────────────────────────────
 echo ""
