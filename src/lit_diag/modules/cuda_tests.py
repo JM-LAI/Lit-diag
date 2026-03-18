@@ -155,7 +155,8 @@ class CUDAModule(BaseDiagnosticModule):
         smi_header = await run_command("nvidia-smi", timeout=30.0)
         if smi_header.success:
             driver_ver, cuda_ver = _extract_cuda_versions(smi_header.stdout)
-            data["cuda_driver_version"] = driver_ver
+            data["nvidia_driver_version"] = driver_ver
+            data["cuda_driver_version"] = cuda_ver
             data["cuda_runtime_version"] = cuda_ver
 
         # try nvcc for the runtime version if available
@@ -165,21 +166,20 @@ class CUDAModule(BaseDiagnosticModule):
             if m:
                 data["cuda_runtime_version"] = m.group(1)
 
-        # compare driver-reported CUDA vs nvcc runtime
-        drv = data.get("cuda_driver_version", "")
-        rt = data.get("cuda_runtime_version", "")
-        if drv and rt and drv != rt:
-            # only flag if major versions actually differ
-            drv_major = drv.split(".")[0]
-            rt_major = rt.split(".")[0]
+        # compare CUDA version from nvidia-smi header vs nvcc
+        drv_cuda = data.get("cuda_driver_version", "")
+        rt_cuda = data.get("cuda_runtime_version", "")
+        if drv_cuda and rt_cuda and drv_cuda != rt_cuda:
+            drv_major = drv_cuda.split(".")[0]
+            rt_major = rt_cuda.split(".")[0]
             if drv_major != rt_major:
                 findings.append(Finding(
                     code="cuda_version_mismatch",
-                    severity=Severity.DEGRADED,
-                    summary=f"CUDA driver ({drv}) and runtime ({rt}) versions differ",
+                    severity=Severity.WARNING,
+                    summary=f"CUDA versions differ: driver reports {drv_cuda}, nvcc reports {rt_cuda}",
                     explanation=(
-                        f"The CUDA driver reports version {drv} and the "
-                        f"installed CUDA toolkit (nvcc) reports {rt}. "
+                        f"nvidia-smi reports CUDA {drv_cuda} but the "
+                        f"installed CUDA toolkit (nvcc) reports {rt_cuda}. "
                         "This is usually fine -- CUDA maintains backward "
                         "compatibility. Only investigate if you're actually "
                         "seeing CUDA errors in your workloads."
@@ -193,7 +193,7 @@ class CUDAModule(BaseDiagnosticModule):
                         "Usually updating the driver or reinstalling the "
                         "matching CUDA toolkit resolves this."
                     ),
-                    detail={"driver_cuda": drv, "runtime_cuda": rt},
+                    detail={"driver_cuda": drv_cuda, "runtime_cuda": rt_cuda},
                 ))
 
         return ModuleResult(

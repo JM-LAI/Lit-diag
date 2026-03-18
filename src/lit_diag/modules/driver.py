@@ -205,6 +205,40 @@ class DriverModule(BaseDiagnosticModule):
             except (OSError, PermissionError):
                 pass
 
+        # -- nvidia-fabricmanager (required for NVLink on multi-GPU) --
+        gpu_count = 0
+        count_result = await run_command("nvidia-smi -L 2>/dev/null | wc -l", timeout=10.0)
+        if count_result.success and count_result.stdout:
+            try:
+                gpu_count = int(count_result.stdout.strip())
+            except ValueError:
+                pass
+        fm_result = await run_command(
+            "systemctl is-active nvidia-fabricmanager 2>/dev/null || true",
+            timeout=5.0,
+        )
+        fm_active = fm_result.success and fm_result.stdout and "active" in fm_result.stdout.strip().lower()
+        data["fabricmanager_active"] = fm_active
+        if gpu_count >= 2 and not fm_active:
+            findings.append(Finding(
+                code="fabricmanager_down",
+                severity=Severity.WARNING,
+                summary="NVLink fabric manager is not running",
+                explanation=(
+                    "This node has multiple GPUs but nvidia-fabricmanager is not running. "
+                    "GPU-to-GPU communication via NVLink may be impaired."
+                ),
+                client_action="This can usually be fixed with a quick command.",
+                engineer_action=(
+                    "Run 'systemctl start nvidia-fabricmanager'. "
+                    "Enable at boot: systemctl enable nvidia-fabricmanager."
+                ),
+                fix_command="systemctl start nvidia-fabricmanager",
+                fix_description="Start NVLink fabric manager service",
+                fix_impact="Enables GPU-to-GPU NVLink communication. No downtime.",
+                fix_requires_root=True,
+            ))
+
         # -- persistence mode --
         pm = await run_command(
             "nvidia-smi --query-gpu=persistence_mode --format=csv,noheader",

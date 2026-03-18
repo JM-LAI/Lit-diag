@@ -49,7 +49,7 @@ class InfiniBandModule(BaseDiagnosticModule):
     name = "infiniband"
     display_name = "InfiniBand"
     requires_root = False
-    optional_tools = ["ibstat", "perfquery"]
+    optional_tools = ["ibstat", "perfquery", "ibportstate"]
 
     async def collect(self) -> ModuleResult:
         findings: list[Finding] = []
@@ -165,27 +165,57 @@ class InfiniBandModule(BaseDiagnosticModule):
                 # down is expected if they're not cabled for RoCE
                 is_ib = "infiniband" in link_layer.lower()
                 if "ACTIVE" not in state.upper() and is_ib:
-                    findings.append(Finding(
-                        code="ib_link_down",
-                        severity=Severity.CRITICAL,
-                        summary=f"InfiniBand port {port_label} is down",
-                        explanation=(
-                            f"Port {port_label} state is '{state}' (expected '4: ACTIVE'). "
-                            f"Physical state: '{phys_state}'. Network connectivity "
-                            "on this port is lost."
-                        ),
-                        client_action="Contact support about network connectivity on this node.",
-                        engineer_action=(
-                            f"Check cable on {port_label}. Verify switch port is up. "
-                            "Run ibdiagnet if available. Check dmesg for mlx5 errors."
-                        ),
-                        detail={
-                            "device": ca,
-                            "port": port_num,
-                            "state": state,
-                            "phys_state": phys_state,
-                        },
-                    ))
+                    # check if admin disabled (fixable with ibportstate)
+                    ibps_result = await run_command(
+                        f"ibportstate -D 0 -C {ca} -P {port_num} 2>/dev/null",
+                        timeout=5.0,
+                    )
+                    admin_disabled = False
+                    if ibps_result.success and ibps_result.stdout:
+                        out = ibps_result.stdout.lower()
+                        admin_disabled = "disabled" in out or "portstate: off" in out
+                    if admin_disabled:
+                        findings.append(Finding(
+                            code="ib_port_admin_disabled",
+                            severity=Severity.WARNING,
+                            summary=f"InfiniBand port {port_label} is administratively disabled",
+                            explanation=(
+                                f"Port {port_label} was disabled by an administrator. "
+                                "It can be re-enabled with ibportstate."
+                            ),
+                            client_action="Contact support to re-enable the port.",
+                            engineer_action=(
+                                f"Run 'ibportstate -D 0 -C {ca} -P {port_num} enable' "
+                                "to re-enable the port."
+                            ),
+                            fix_command=f"ibportstate -D 0 -C {ca} -P {port_num} enable",
+                            fix_description=f"Re-enable InfiniBand port {port_label}",
+                            fix_impact="Restores network connectivity on this port.",
+                            fix_requires_root=True,
+                            detail={"device": ca, "port": port_num},
+                        ))
+                    else:
+                        findings.append(Finding(
+                            code="ib_link_down",
+                            severity=Severity.CRITICAL,
+                            summary=f"InfiniBand port {port_label} is down",
+                            explanation=(
+                                f"Port {port_label} state is '{state}' (expected '4: ACTIVE'). "
+                                f"Physical state: '{phys_state}'. Network connectivity "
+                                "on this port is lost."
+                            ),
+                            client_action="Contact support about network connectivity on this node.",
+                            engineer_action=(
+                                f"Check cable on {port_label}. Verify switch port is up. "
+                                "Run ibdiagnet if available. Check dmesg for mlx5 errors."
+                            ),
+                            detail={
+                                "device": ca,
+                                "port": port_num,
+                                "state": state,
+                                "phys_state": phys_state,
+                            },
+                        ))
 
                 # findings: link flapping (IB ports only)
                 if link_downed > 0 and is_ib:

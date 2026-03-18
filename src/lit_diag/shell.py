@@ -229,6 +229,8 @@ def interactive_shell() -> None:
             console.print(f"\n  [bold]Running: {mod_label}...[/bold]\n")
             last_report = asyncio.run(run_modules([mod_name], console))
             print_report(last_report, console, role)
+            _offer_fixes(console, last_report)
+            _offer_save(console, last_report)
 
         elif choice == "d":
             _show_deps(console)

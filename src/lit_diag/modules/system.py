@@ -159,13 +159,34 @@ class SystemModule(BaseDiagnosticModule):
                 data["os"] = m.group(1)
 
         # -- Uptime --
+        uptime_secs = 0.0
         uptime_raw = _read_proc_file("/proc/uptime")
         if uptime_raw:
             try:
-                secs = float(uptime_raw.split()[0])
-                data["uptime"] = _format_uptime(secs)
+                uptime_secs = float(uptime_raw.split()[0])
+                data["uptime"] = _format_uptime(uptime_secs)
+                data["uptime_seconds"] = uptime_secs
             except (ValueError, IndexError):
                 pass
+
+        # -- Short uptime: rebooted < 1h ago (not first boot) --
+        if uptime_secs > 0 and uptime_secs < 3600:
+            findings.append(Finding(
+                code="short_uptime",
+                severity=Severity.WARNING,
+                summary="This node rebooted less than 1 hour ago",
+                explanation=(
+                    f"System uptime is {_format_uptime(uptime_secs)}. "
+                    "If this reboot was unexpected, it may indicate a crash or "
+                    "automatic update."
+                ),
+                client_action="Check if this reboot was expected. Contact support if not.",
+                engineer_action=(
+                    "Check 'last reboot' and kernel logs for panic/oops. "
+                    "Review MCE logs if available."
+                ),
+                detail={"uptime_seconds": uptime_secs},
+            ))
 
         # -- Load average --
         loadavg_raw = _read_proc_file("/proc/loadavg")
@@ -214,12 +235,31 @@ class SystemModule(BaseDiagnosticModule):
         if hostname.success:
             data["hostname"] = hostname.stdout.strip()
 
+        # -- Primary IP (for tickets / SSH reference) --
+        ip_result = await run_command(
+            "hostname -I 2>/dev/null | awk '{print $1}'", timeout=5.0
+        )
+        if ip_result.success and ip_result.stdout.strip():
+            data["primary_ip"] = ip_result.stdout.strip().split()[0]
+
+        # -- NTP / time sync --
+        time_sync = await self._check_time_sync()
+        if time_sync:
+            data["time_sync"] = time_sync
+
+        # -- Reboot history (last 5 reboots) --
+        reboot_result = await run_command("last reboot 2>/dev/null | head -6", timeout=5.0)
+        if reboot_result.success and reboot_result.stdout:
+            lines = [ln.strip() for ln in reboot_result.stdout.splitlines() if ln.strip()]
+            data["reboot_history"] = lines[:5]
+
         # -- Kernel taint check --
         tainted = _read_proc_file("/proc/sys/kernel/tainted")
         if tainted:
             try:
                 taint_val = int(tainted.strip())
                 data["kernel_tainted"] = taint_val
+                data["kernel_tainted_decoded"] = _decode_taint(taint_val)
                 if taint_val > 0:
                     # P (1) = proprietary module, O (4096) = out-of-tree module
                     # E (8192) = unsigned module -- all expected with nvidia driver
@@ -261,3 +301,73 @@ class SystemModule(BaseDiagnosticModule):
             findings=findings,
             data=data,
         )
+
+    async def _check_time_sync(self) -> dict[str, Any]:
+        """Check NTP / time sync status via timedatectl or chronyc."""
+        info: dict[str, Any] = {}
+
+        tdc = await run_command("timedatectl show 2>/dev/null", timeout=5.0)
+        if tdc.success and tdc.stdout:
+            for line in tdc.stdout.splitlines():
+                if "=" not in line:
+                    continue
+                key, val = line.split("=", 1)
+                key = key.strip()
+                val = val.strip()
+                if key == "NTP":
+                    info["ntp_enabled"] = val.lower() == "yes"
+                elif key == "NTPSynchronized":
+                    info["ntp_synced"] = val.lower() == "yes"
+                elif key == "TimeUSec":
+                    info["system_time"] = val
+            if info:
+                return info
+
+        # fallback: chronyc
+        chrony = await run_command("chronyc tracking 2>/dev/null", timeout=5.0)
+        if chrony.success and chrony.stdout:
+            info["source"] = "chrony"
+            for line in chrony.stdout.splitlines():
+                if "Leap status" in line:
+                    info["ntp_synced"] = "Normal" in line
+                elif "System time" in line:
+                    info["offset"] = line.split(":", 1)[1].strip() if ":" in line else ""
+                elif "Stratum" in line:
+                    info["stratum"] = line.split(":", 1)[1].strip() if ":" in line else ""
+            return info
+
+        return info
+
+
+# kernel taint bitmask decoder
+_TAINT_FLAGS: dict[int, str] = {
+    0: "P (proprietary module)",
+    1: "F (module force-loaded)",
+    2: "S (SMP with non-SMP kernel)",
+    3: "R (module force-unloaded)",
+    4: "M (machine check exception)",
+    5: "B (bad page in page tables)",
+    6: "U (user-requested taint)",
+    7: "D (kernel died / oops)",
+    8: "A (ACPI table overridden)",
+    9: "W (kernel warning issued)",
+    10: "C (staging driver loaded)",
+    11: "I (workaround for firmware bug)",
+    12: "O (out-of-tree module)",
+    13: "E (unsigned module)",
+    14: "L (soft lockup occurred)",
+    15: "K (live-patched kernel)",
+    16: "X (auxiliary taint)",
+    17: "T (build-time known issue)",
+}
+
+
+def _decode_taint(taint_val: int) -> str:
+    """Decode kernel taint bitmask to human-readable flags."""
+    if taint_val == 0:
+        return "clean"
+    flags = []
+    for bit, label in sorted(_TAINT_FLAGS.items()):
+        if taint_val & (1 << bit):
+            flags.append(label)
+    return ", ".join(flags) if flags else str(taint_val)

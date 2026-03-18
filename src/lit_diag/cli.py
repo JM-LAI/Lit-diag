@@ -39,6 +39,10 @@ def cli(ctx, version, do_reset):
         console.print("[green]Config reset.[/green] You'll be prompted on next run.")
         raise SystemExit(0)
 
+    # check for updates on every interactive launch (cached, max once/hour)
+    from lit_diag.updater import check_for_update
+    check_for_update(console)
+
     if ctx.invoked_subcommand is None:
         from lit_diag.shell import interactive_shell
         interactive_shell()
@@ -50,9 +54,10 @@ def cli(ctx, version, do_reset):
 @click.option("--all", "run_all", is_flag=True, help="Run all diagnostic modules.")
 @click.option("--client", "client_flag", is_flag=True, help="Force client-friendly output.")
 @click.option("--staff", "staff_flag", is_flag=True, help="Force full engineer output.")
+@click.option("--non-interactive", "non_interactive", is_flag=True, help="No prompts; safe for SSH/automation.")
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
 @click.option("-o", "--output", "output_file", type=str, default=None, help="Save JSON report to file.")
-def run(modules, run_all, client_flag, staff_flag, json_output, output_file):
+def run(modules, run_all, client_flag, staff_flag, non_interactive, json_output, output_file):
     """Run diagnostic checks.
 
     Specify module names or use --all for everything.
@@ -85,8 +90,8 @@ def run(modules, run_all, client_flag, staff_flag, json_output, output_file):
         )
         raise SystemExit(1)
 
-    # pre-flight root check for --all (non-JSON mode)
-    if run_all and not json_output and not output_file:
+    # pre-flight root check for --all (non-JSON mode); skip when non-interactive
+    if run_all and not json_output and not output_file and not non_interactive:
         from lit_diag.engine.privilege import is_root, pre_flight_root_check, sudo_relaunch
         if not is_root():
             should_proceed = pre_flight_root_check(console)
@@ -109,9 +114,10 @@ def run(modules, run_all, client_flag, staff_flag, json_output, output_file):
     else:
         print_report(report, console, role)
 
-        # offer quick fixes if any are available (same as shell mode)
-        from lit_diag.shell import _offer_fixes
-        _offer_fixes(console, report)
+        # offer quick fixes if any are available (skip prompts when non-interactive)
+        if not non_interactive:
+            from lit_diag.shell import _offer_fixes
+            _offer_fixes(console, report)
 
 
 @cli.command()

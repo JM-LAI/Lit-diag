@@ -144,6 +144,14 @@ class PCIeModule(BaseDiagnosticModule):
             correctable = _read_aer_file(f"{sysfs_dev}/aer_dev_correctable")
             fatal = _read_aer_file(f"{sysfs_dev}/aer_dev_fatal")
 
+            # PCIe replay count from lspci output (early link degradation signal)
+            replay_count = 0
+            replay_match = re.search(r"RlmtRep\+\s*(\d+)", detail_text)
+            if not replay_match:
+                replay_match = re.search(r"Replay\s+Timer.*?Count:\s*(\d+)", detail_text)
+            if replay_match:
+                replay_count = int(replay_match.group(1))
+
             devices.append({
                 "bdf": bdf,
                 "name": dev_name,
@@ -153,6 +161,7 @@ class PCIeModule(BaseDiagnosticModule):
                 "capable_width": capable_width,
                 "correctable": correctable,
                 "fatal": fatal,
+                "replay_count": replay_count,
             })
 
             # link width degradation

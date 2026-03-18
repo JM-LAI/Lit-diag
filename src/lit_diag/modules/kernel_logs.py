@@ -429,6 +429,15 @@ class KernelLogsModule(BaseDiagnosticModule):
         # serialize xid_summary keys to strings for JSON compat
         xid_summary_str = {str(k): v for k, v in xid_summary.items()}
 
+        # last error age -- how recent was the most recent problem entry
+        last_error_ts = ""
+        for entry in reversed(entries):
+            cat = entry.get("category", "")
+            if cat in ("xid", "sxid", "nvrm_error", "oom", "soft_lockup",
+                        "hard_lockup", "nvme_io_error", "iommu_fault"):
+                last_error_ts = entry.get("timestamp", "")
+                break
+
         return ModuleResult(
             module_name=self.name,
             findings=findings,
@@ -436,5 +445,6 @@ class KernelLogsModule(BaseDiagnosticModule):
                 "entries": entries,
                 "xid_summary": xid_summary_str,
                 "categories": categories,
+                "last_error_ts": last_error_ts,
             },
         )

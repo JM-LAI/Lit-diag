@@ -106,12 +106,17 @@ class DiagnosticReport(BaseModel):
             if priority.get(sev, 0) > priority.get(worst, 0):
                 worst = sev
             for f in result.findings:
-                if f.severity in (Severity.WARNING, Severity.CRITICAL, Severity.ERROR):
+                if f.severity in (Severity.DEGRADED, Severity.WARNING, Severity.CRITICAL, Severity.ERROR):
                     codes.append(f.code)
                     finding_summaries.append(f.summary)
+            # modules that are degraded/worse but have no findings still count
+            if sev != Severity.OK and not result.findings:
+                codes.append(f"{result.module_name}_degraded")
+                msg = result.error_message or f"{result.module_name} is {sev.value}"
+                finding_summaries.append(msg)
 
         self.overall_status = worst
-        self.degraded = worst in (Severity.CRITICAL, Severity.ERROR)
+        self.degraded = worst in (Severity.DEGRADED, Severity.WARNING, Severity.CRITICAL, Severity.ERROR)
         self.degraded_codes = codes
 
         if finding_summaries:

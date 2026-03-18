@@ -33,17 +33,36 @@ nvidia-smi and paste the output" for the hundredth time.
 
 ## Install
 
-```
-pip install .
-```
-
-Or install straight from the repo:
+One command:
 
 ```
-pip install git+https://github.com/JM-LAI/Lit-diag.git
+curl -fsSL https://raw.githubusercontent.com/JM-LAI/Lit-diag/main/get.sh | bash
 ```
 
-Done. You've got `lit-diag` on your PATH now.
+That's it. No pip, no venv, no PATH headaches -- it handles everything.
+Need root-level checks (thermals, kernel logs, NVMe health)? Use sudo:
+
+```
+curl -fsSL https://raw.githubusercontent.com/JM-LAI/Lit-diag/main/get.sh | sudo bash
+```
+
+Run the same command again anytime to update. Lit-Diag also checks
+for updates automatically on launch and prompts you if there's a
+newer version.
+
+### Staff deploying to a node
+
+```
+ssh user@node "curl -fsSL https://raw.githubusercontent.com/JM-LAI/Lit-diag/main/get.sh | sudo bash"
+```
+
+### Dev install
+
+```
+git clone https://github.com/JM-LAI/Lit-diag.git
+cd Lit-diag
+pip install -e ".[dev]"
+```
 
 ---
 
@@ -249,16 +268,6 @@ No more "now try lspci -vvv and grep for..."
 No more "check dmesg for XID errors please."
 
 All of that is already in the report. Every time.
-
----
-
-## Development
-
-```
-git clone https://github.com/JM-LAI/Lit-diag.git
-cd Lit-diag
-pip install -e ".[dev]"
-```
 
 ---
 
