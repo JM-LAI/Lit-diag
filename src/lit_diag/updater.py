@@ -97,6 +97,20 @@ def _do_update() -> bool:
         return False
 
 
+def _restart() -> None:
+    """Re-exec the current process so the new version loads fresh."""
+    import shutil
+
+    # skip the update check on the restarted process -- we just updated
+    os.environ["LIT_DIAG_NO_UPDATE"] = "1"
+
+    wrapper = shutil.which("lit-diag")
+    if wrapper:
+        os.execv(wrapper, ["lit-diag"] + sys.argv[1:])
+    else:
+        os.execv(sys.executable, [sys.executable, "-m", "lit_diag.cli"] + sys.argv[1:])
+
+
 def check_for_update(console) -> None:
     """Check if a newer version exists and offer to update.
 
@@ -159,8 +173,9 @@ def check_for_update(console) -> None:
             if _do_update():
                 console.print(
                     f"  [green]Updated to v{remote}.[/green] "
-                    f"Restart lit-diag to use the new version.\n"
+                    f"Restarting...\n"
                 )
+                _restart()
             else:
                 console.print(
                     "  [red]Update failed.[/red] Try manually:\n"
