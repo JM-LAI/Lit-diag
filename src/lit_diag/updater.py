@@ -11,8 +11,8 @@ from pathlib import Path
 
 from lit_diag import __version__
 
-REPO_VERSION_URL = (
-    "https://raw.githubusercontent.com/JM-LAI/Lit-diag/main/src/lit_diag/__init__.py"
+REPO_API_URL = (
+    "https://api.github.com/repos/JM-LAI/Lit-diag/contents/src/lit_diag/__init__.py"
 )
 REPO_URL = "https://github.com/JM-LAI/Lit-diag.git"
 
@@ -27,14 +27,22 @@ def _version_tuple(v: str) -> tuple[int, ...]:
 
 
 def _fetch_remote_version() -> str | None:
-    """Grab __version__ from the repo's __init__.py. Quick and quiet."""
+    """Grab __version__ from the repo via GitHub API (no CDN caching)."""
     try:
+        import base64
         from urllib.request import urlopen, Request
 
-        req = Request(REPO_VERSION_URL, headers={"User-Agent": "lit-diag-updater"})
-        with urlopen(req, timeout=3) as resp:
-            text = resp.read().decode("utf-8", errors="replace")
-        match = re.search(r'__version__\s*=\s*["\']([^"\']+)["\']', text)
+        req = Request(
+            REPO_API_URL,
+            headers={
+                "User-Agent": "lit-diag-updater",
+                "Accept": "application/vnd.github.v3+json",
+            },
+        )
+        with urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8", errors="replace"))
+        content = base64.b64decode(data["content"]).decode("utf-8")
+        match = re.search(r'__version__\s*=\s*["\']([^"\']+)["\']', content)
         return match.group(1) if match else None
     except Exception:
         return None
