@@ -10,6 +10,8 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
+from lit_diag import __version__
+
 
 class Severity(str, Enum):
     OK = "ok"
@@ -75,7 +77,7 @@ class DiagnosticReport(BaseModel):
     """Full report from all modules -- the top-level output."""
 
     tool: str = "Lit-Diag by Lightning AI"
-    version: str = "0.1.0"
+    version: str = __version__
     timestamp: str = Field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )
