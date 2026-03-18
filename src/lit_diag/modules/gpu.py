@@ -296,25 +296,61 @@ class GPUModule(BaseDiagnosticModule):
                 ))
 
         # -- Throttle reason findings --
+        # bitmask meanings (from NVML docs):
+        #   0x01 = GPU Idle (normal, not a problem)
+        #   0x02 = Applications Clocks Setting (expected when app clocks set)
+        #   0x04 = SW Power Cap
+        #   0x08 = HW Slowdown (thermal/power brake -- bad)
+        #   0x10 = Sync Boost
+        #   0x20 = SW Thermal Slowdown
+        #   0x40 = HW Thermal Slowdown
+        #   0x80 = HW Power Brake
+        BENIGN_THROTTLE_MASK = 0x01 | 0x02  # idle + app clocks are expected
         for dev in devices:
             throttle = dev.get("throttle_reasons", "")
-            if throttle and "idle" not in throttle.lower() and "none" not in throttle.lower():
-                idx = dev.get("index", "?")
-                findings.append(Finding(
-                    code="gpu_throttled",
-                    severity=Severity.WARNING,
-                    summary=f"GPU {idx} is being throttled: {throttle}",
-                    explanation=(
-                        f"GPU {idx} clock speeds are being reduced. "
-                        "This can cause slower workload performance."
-                    ),
-                    client_action="Contact support if performance is degraded.",
-                    engineer_action=(
-                        f"Check nvidia-smi -q -i {idx} for throttle details. "
-                        "Common causes: thermal limits, power cap, HW slowdown."
-                    ),
-                    detail={"gpu_index": idx, "throttle_reasons": throttle},
-                ))
+            if not throttle:
+                continue
+            try:
+                throttle_val = int(throttle, 16)
+            except (ValueError, TypeError):
+                throttle_val = 0xFFFF  # unknown format, flag it
+            # strip out benign bits -- if nothing concerning remains, skip
+            concerning = throttle_val & ~BENIGN_THROTTLE_MASK
+            if concerning == 0:
+                continue
+            idx = dev.get("index", "?")
+            reasons = []
+            if concerning & 0x04:
+                reasons.append("SW Power Cap")
+            if concerning & 0x08:
+                reasons.append("HW Slowdown")
+            if concerning & 0x20:
+                reasons.append("SW Thermal Slowdown")
+            if concerning & 0x40:
+                reasons.append("HW Thermal Slowdown")
+            if concerning & 0x80:
+                reasons.append("HW Power Brake")
+            if concerning & 0x10:
+                reasons.append("Sync Boost")
+            if concerning & 0x100:
+                reasons.append("Display Clock Setting")
+            reason_str = ", ".join(reasons) if reasons else throttle
+            severity = Severity.CRITICAL if (concerning & 0xC8) else Severity.WARNING
+            findings.append(Finding(
+                code="gpu_throttled",
+                severity=severity,
+                summary=f"GPU {idx} is being throttled: {reason_str}",
+                explanation=(
+                    f"GPU {idx} clock speeds are being reduced due to {reason_str}. "
+                    "This can cause slower workload performance."
+                ),
+                client_action="Contact support -- GPU performance is degraded.",
+                engineer_action=(
+                    f"Check nvidia-smi -q -i {idx} for throttle details. "
+                    f"Active reasons: {throttle} ({reason_str})."
+                ),
+                detail={"gpu_index": idx, "throttle_reasons": throttle, "decoded": reasons},
+            ))
 
         # -- Memory pressure: any GPU > 90% used --
         for dev in devices:
@@ -472,40 +508,52 @@ class GPUModule(BaseDiagnosticModule):
 
         # -- GPU process snapshot (nice-to-have, non-fatal if it fails) --
         proc_result = await run_command(
-            "nvidia-smi --query-compute-apps=pid,used_memory,gpu_name "
+            "nvidia-smi --query-compute-apps=pid,used_memory,gpu_name,name "
             "--format=csv,noheader,nounits",
             timeout=15.0,
         )
         if proc_result.success and proc_result.stdout:
             processes: list[dict[str, Any]] = []
             for line in proc_result.stdout.splitlines():
-                parts = _parse_csv_row(line, 3)
+                parts = _parse_csv_row(line, 4)
                 processes.append({
                     "pid": _safe_int(parts[0]),
                     "memory_used_mib": _safe_float(parts[1]),
                     "gpu_name": parts[2],
+                    "process_name": parts[3].strip() if len(parts) > 3 else "",
                 })
             data["processes"] = processes
 
         # -- Utilization: all GPUs at 0% but processes present --
+        # skip background daemons that sit on GPUs without doing real work
+        BACKGROUND_PROCS = {"nvidia-persistenced", "dcgmi", "nv-hostengine", "nvidia-cuda-mps"}
         processes = data.get("processes", [])
-        if processes and devices:
+        real_procs = [
+            p for p in processes
+            if not any(bg in p.get("process_name", "").lower() for bg in BACKGROUND_PROCS)
+        ]
+        if real_procs and devices:
             all_zero_util = all(dev.get("utilization", 0) == 0 for dev in devices)
             if all_zero_util:
+                proc_names = list(dict.fromkeys(
+                    os.path.basename(p.get("process_name", "?")) for p in real_procs
+                ))
+                name_str = ", ".join(proc_names[:3])
                 findings.append(Finding(
                     code="gpu_utilization_zero",
                     severity=Severity.WARNING,
-                    summary="GPUs have processes attached but are idle",
+                    summary=f"GPUs have processes attached but are idle ({name_str})",
                     explanation=(
-                        "Your GPUs show 0% utilization while processes are running. "
-                        "Your workload may not be using the GPUs effectively."
+                        f"Your GPUs show 0% utilization while {name_str} "
+                        "is running. Your workload may not be using the GPUs effectively."
                     ),
                     client_action=(
                         "Check that your application is actually using GPUs. "
                         "If training is slow, contact support."
                     ),
                     engineer_action=(
-                        "Verify workload is GPU-bound. Check NCCL/cudaMalloc usage."
+                        "Verify workload is GPU-bound. Check NCCL/cudaMalloc usage. "
+                        f"Processes: {proc_names}"
                     ),
                 ))
 

@@ -230,8 +230,10 @@ def print_staff_data(report: DiagnosticReport, console: Console) -> None:
         console.print(f"  [bold purple4]── {icon} {friendly} ──[/bold purple4]")
 
         if not result.data or _is_data_empty(result.data):
-            if name in NEEDS_ROOT_HINT:
+            if name in NEEDS_ROOT_HINT and os.geteuid() != 0:
                 console.print(f"    {NEEDS_ROOT_HINT[name]}")
+            elif name in NEEDS_ROOT_HINT and os.geteuid() == 0:
+                console.print("    [dim]No issues found[/dim]")
             elif result.error_message:
                 console.print(f"    [dim]{result.error_message}[/dim]")
             else:
@@ -483,32 +485,55 @@ def print_staff_data(report: DiagnosticReport, console: Console) -> None:
                     _print_ib_port(port)
 
         elif name == "thermal" and "sensors" in data:
+            temps = []
+            fans = []
+            other = []
             for sensor in data["sensors"]:
                 sname = sensor.get('name', '?')
                 val = _safe_float(sensor.get('value'))
                 unit = sensor.get('unit', '')
                 name_lower = sname.lower()
-                # skip noisy/useless IPMI sensors
                 if any(skip in name_lower for skip in (
                     'overt', 'redundancy', 'ps redundancy',
                 )):
                     continue
                 if name_lower == 'status' and val == 0.0:
                     continue
-
                 if unit == "C":
+                    temps.append((sname, val))
+                elif unit == "RPM":
+                    fans.append((sname, val))
+                else:
+                    other.append((sname, val, unit))
+
+            # show temps individually (usually just a few)
+            if temps:
+                console.print("    [dim]Temperatures:[/dim]")
+                for sname, val in temps:
+                    name_lower = sname.lower()
                     if any(kw in name_lower for kw in ('inlet', 'ambient')):
                         val_str = color_temp(val, warn=35, crit=40)
                     elif 'gpu' in name_lower:
                         val_str = color_gpu_temp(val)
                     else:
                         val_str = color_temp(val, warn=85, crit=95)
-                elif unit == "RPM":
-                    val_str = color_rpm(val)
-                else:
-                    val_str = f"{val}{unit}"
+                    console.print(f"      {sname}: {val_str}")
 
-                console.print(f"    [dim]{sname}:[/dim] {val_str}")
+            # summarize fans instead of listing each one
+            if fans:
+                rpms = [v for _, v in fans if v > 0]
+                if rpms:
+                    avg_rpm = sum(rpms) / len(rpms)
+                    min_rpm = min(rpms)
+                    max_rpm = max(rpms)
+                    console.print(
+                        f"    [dim]Fans:[/dim] {len(rpms)} active  "
+                        f"avg {avg_rpm:.0f} RPM  "
+                        f"(range: {min_rpm:.0f}–{max_rpm:.0f})"
+                    )
+
+            for sname, val, unit in other:
+                console.print(f"    [dim]{sname}:[/dim] {val}{unit}")
             if "sel_entries" in data and data["sel_entries"]:
                 sel = data["sel_entries"]
                 n = len(sel)
