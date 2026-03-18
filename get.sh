@@ -68,10 +68,12 @@ echo -e "${BOLD}  Lit-Diag Installer${NC}"
 echo -e "  ${DIM}─────────────────────────────${NC}"
 echo ""
 
-if [ -d "$VENV_DIR" ]; then
+if [ -x "$VENV_DIR/bin/python" ]; then
     info "Updating existing installation..."
     ACTION="update"
 else
+    # clean up any broken previous attempt
+    [ -d "$INSTALL_DIR" ] && rm -rf "$INSTALL_DIR"
     info "Installing to ${DIM}$INSTALL_DIR${NC}"
     ACTION="install"
     mkdir -p "$INSTALL_DIR"
