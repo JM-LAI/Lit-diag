@@ -94,7 +94,6 @@ def _do_update() -> bool:
     else:
         cmd = [sys.executable, "-m", "pip", "install", "--upgrade", "--quiet", f"git+{REPO_URL}"]
 
-    # if the venv is root-owned, we need sudo
     if _needs_sudo():
         cmd = ["sudo"] + cmd
 
@@ -109,7 +108,6 @@ def _restart() -> None:
     """Re-exec the current process so the new version loads fresh."""
     import shutil
 
-    # skip the update check on the restarted process -- we just updated
     os.environ["LIT_DIAG_NO_UPDATE"] = "1"
 
     wrapper = shutil.which("lit-diag")
@@ -119,36 +117,45 @@ def _restart() -> None:
         os.execv(sys.executable, [sys.executable, "-m", "lit_diag.cli"] + sys.argv[1:])
 
 
-def check_for_update(console) -> None:
-    """Check if a newer version exists and offer to update.
-
-    Runs at most once per hour (cached). Skips silently on any error.
-    """
-    if os.environ.get("LIT_DIAG_NO_UPDATE"):
-        return
-
+def _get_remote_version() -> str | None:
+    """Get remote version, using cache only if it already found an update."""
     cache = _read_cache()
     now = time.time()
     last_check = cache.get("last_check", 0)
     cached_remote = cache.get("remote_version")
 
-    # only use cache if it found a NEWER version last time;
-    # if the cached result was "no update", re-check every launch
-    # so we don't miss an update for an entire hour
-    cache_is_useful = (
-        cached_remote
-        and now - last_check < CHECK_INTERVAL
-        and _version_tuple(cached_remote) > _version_tuple(__version__)
-    )
+    try:
+        cache_has_update = (
+            cached_remote
+            and now - last_check < CHECK_INTERVAL
+            and _version_tuple(cached_remote) > _version_tuple(__version__)
+        )
+    except Exception:
+        cache_has_update = False
 
-    if cache_is_useful:
-        remote = cached_remote
-    else:
-        remote = _fetch_remote_version()
-        cache["last_check"] = now
-        cache["remote_version"] = remote
-        _write_cache(cache)
+    if cache_has_update:
+        return cached_remote
 
+    remote = _fetch_remote_version()
+    cache["last_check"] = now
+    cache["remote_version"] = remote
+    _write_cache(cache)
+    return remote
+
+
+def check_for_update(console) -> None:
+    """Check if a newer version exists and offer to update."""
+    try:
+        _check_for_update_inner(console)
+    except Exception:
+        pass
+
+
+def _check_for_update_inner(console) -> None:
+    if os.environ.get("LIT_DIAG_NO_UPDATE"):
+        return
+
+    remote = _get_remote_version()
     if not remote:
         return
 
@@ -158,40 +165,26 @@ def check_for_update(console) -> None:
     except Exception:
         return
 
-    # always tell the user about the update
-    console.print(
-        f"\n  [bold yellow]Update available:[/bold yellow] "
-        f"[dim]{__version__}[/dim] → [bold green]{remote}[/bold green]"
-    )
+    # use plain print to guarantee visibility regardless of Rich/TTY quirks
+    print(flush=True)
+    print(f"  \033[1;33mUpdate available:\033[0m {__version__} → \033[1;32m{remote}\033[0m", flush=True)
 
-    # only offer interactive update if we can prompt
-    interactive = sys.stdin.isatty() or sys.stdout.isatty()
-    if interactive:
-        try:
-            choice = console.input("  Update now? (Y/n): ").strip().lower()
-        except (EOFError, KeyboardInterrupt):
-            console.print(
-                f"  [dim]Run: curl -fsSL https://raw.githubusercontent.com/"
-                f"JM-LAI/Lit-diag/main/get.sh | sudo bash[/dim]\n"
-            )
-            return
+    try:
+        answer = input("  Update now? [Y/n]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt, OSError):
+        print(f"  Run: curl -fsSL https://raw.githubusercontent.com/JM-LAI/Lit-diag/main/get.sh | sudo bash", flush=True)
+        print(flush=True)
+        return
 
-        if choice in ("", "y", "yes"):
-            console.print("  [dim]Updating...[/dim]")
-            if _do_update():
-                console.print(
-                    f"  [green]Updated to v{remote}.[/green] "
-                    f"Restarting...\n"
-                )
-                _restart()
-            else:
-                console.print(
-                    "  [red]Update failed.[/red] Try manually:\n"
-                    f"  [dim]curl -fsSL https://raw.githubusercontent.com/"
-                    f"JM-LAI/Lit-diag/main/get.sh | sudo bash[/dim]\n"
-                )
+    if answer in ("", "y", "yes"):
+        print("  Updating...", flush=True)
+        if _do_update():
+            print(f"  \033[32mUpdated to v{remote}.\033[0m Restarting...", flush=True)
+            print(flush=True)
+            _restart()
+        else:
+            print("  \033[31mUpdate failed.\033[0m Try manually:", flush=True)
+            print(f"  curl -fsSL https://raw.githubusercontent.com/JM-LAI/Lit-diag/main/get.sh | sudo bash", flush=True)
+            print(flush=True)
     else:
-        console.print(
-            f"  [dim]Run: curl -fsSL https://raw.githubusercontent.com/"
-            f"JM-LAI/Lit-diag/main/get.sh | sudo bash[/dim]\n"
-        )
+        print(flush=True)
