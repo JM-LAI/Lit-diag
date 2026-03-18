@@ -74,39 +74,68 @@ else
     info "Installing to ${DIM}$INSTALL_DIR${NC}"
     mkdir -p "$INSTALL_DIR"
 
-    # try normal venv first
-    if python3 -m venv "$VENV_DIR" 2>/dev/null; then
+    # try normal venv first (suppress all noise)
+    if python3 -m venv "$VENV_DIR" >/dev/null 2>&1; then
         true
     elif [ "$(id -u)" -eq 0 ]; then
-        # venv failed -- try to fix apt and install python3-venv
-        info "python3-venv missing, fixing package manager..."
+        # venv failed (usually missing ensurepip / python3-venv)
+        info "Setting up Python environment..."
         rm -rf "$VENV_DIR"
+
+        # figure out the full python package name (e.g. python3.10)
+        PY_PKG="python${PY_VER}"
+
+        # GPU nodes often hold every package to prevent CUDA breakage.
+        # temporarily unhold python so we can install python3.X-venv.
+        HELD_PKGS=()
+        for pkg in "${PY_PKG}" "${PY_PKG}-minimal" "${PY_PKG}-dev" \
+                   "lib${PY_PKG}-minimal" "lib${PY_PKG}-stdlib" \
+                   "lib${PY_PKG}-dev" "lib${PY_PKG}" \
+                   "python3" "python3-minimal" "python3-dev" \
+                   "libpython3-dev" "libpython3-stdlib"; do
+            if apt-mark showhold 2>/dev/null | grep -qx "$pkg"; then
+                HELD_PKGS+=("$pkg")
+            fi
+        done
+
+        if [ ${#HELD_PKGS[@]} -gt 0 ]; then
+            info "Temporarily unholding ${#HELD_PKGS[@]} Python packages..."
+            apt-mark unhold "${HELD_PKGS[@]}" >/dev/null 2>&1 || true
+        fi
+
+        # now try to install python3.X-venv
         apt-get update -qq >/dev/null 2>&1 || true
         apt-get --fix-broken install -y -qq >/dev/null 2>&1 || true
-        apt-get install -y -qq "python${PY_VER}-venv" >/dev/null 2>&1 \
+        dpkg --configure -a >/dev/null 2>&1 || true
+        apt-get install -y -qq "${PY_PKG}-venv" >/dev/null 2>&1 \
             || apt-get install -y -qq python3-venv >/dev/null 2>&1 \
             || true
 
-        if python3 -m venv "$VENV_DIR" 2>/dev/null; then
+        # re-hold everything we unholded
+        if [ ${#HELD_PKGS[@]} -gt 0 ]; then
+            apt-mark hold "${HELD_PKGS[@]}" >/dev/null 2>&1 || true
+        fi
+
+        if python3 -m venv "$VENV_DIR" >/dev/null 2>&1; then
             true
         else
-            # apt is truly broken -- bootstrap without it
-            info "apt couldn't fix it, bootstrapping manually..."
+            # apt truly can't help -- bootstrap without it
+            info "Bootstrapping pip manually..."
             rm -rf "$VENV_DIR"
-            python3 -m venv --without-pip "$VENV_DIR" 2>/dev/null \
-                || die "Cannot create venv. Ensure python3 is properly installed."
+            python3 -m venv --without-pip "$VENV_DIR" >/dev/null 2>&1 \
+                || die "Cannot create Python environment. Is python3 installed correctly?"
             curl -fsSL "$GET_PIP_URL" -o /tmp/_get_pip.py
-            "$VENV_PY" /tmp/_get_pip.py --quiet 2>&1 | grep -v "^$" || true
+            "$VENV_PY" /tmp/_get_pip.py --quiet >/dev/null 2>&1 || true
             rm -f /tmp/_get_pip.py
         fi
     else
         # not root, can't fix apt -- go straight to manual bootstrap
-        info "python3-venv unavailable, bootstrapping manually..."
+        info "Bootstrapping pip manually..."
         rm -rf "$VENV_DIR"
-        python3 -m venv --without-pip "$VENV_DIR" 2>/dev/null \
-            || die "Cannot create venv. Run with sudo or install python3-venv."
+        python3 -m venv --without-pip "$VENV_DIR" >/dev/null 2>&1 \
+            || die "Cannot create Python environment. Try running with sudo."
         curl -fsSL "$GET_PIP_URL" -o /tmp/_get_pip.py
-        "$VENV_PY" /tmp/_get_pip.py --quiet 2>&1 | grep -v "^$" || true
+        "$VENV_PY" /tmp/_get_pip.py --quiet >/dev/null 2>&1 || true
         rm -f /tmp/_get_pip.py
     fi
 fi
@@ -115,13 +144,16 @@ fi
 if [ ! -x "$VENV_PIP" ]; then
     info "Bootstrapping pip..."
     curl -fsSL "$GET_PIP_URL" -o /tmp/_get_pip.py
-    "$VENV_PY" /tmp/_get_pip.py --quiet 2>&1 | grep -v "^$" || true
+    "$VENV_PY" /tmp/_get_pip.py --quiet >/dev/null 2>&1 || true
     rm -f /tmp/_get_pip.py
 fi
 
+[ -x "$VENV_PIP" ] || die "Could not set up pip. Check your Python installation."
+
 # ── install / upgrade lit-diag from the repo ──────────────
-"$VENV_PIP" install --upgrade --quiet pip 2>/dev/null || true
-"$VENV_PIP" install --upgrade --quiet "git+${REPO}" 2>&1 | grep -v "^$" || true
+info "Installing lit-diag from GitHub..."
+"$VENV_PIP" install --upgrade --quiet pip >/dev/null 2>&1 || true
+"$VENV_PIP" install --upgrade --quiet "git+${REPO}" >/dev/null 2>&1 || true
 
 # verify
 if ! "$VENV_PY" -c "import lit_diag" 2>/dev/null; then
