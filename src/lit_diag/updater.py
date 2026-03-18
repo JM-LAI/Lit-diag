@@ -65,6 +65,17 @@ def _find_venv_pip() -> str | None:
     return None
 
 
+def _needs_sudo() -> bool:
+    """Check if the venv is owned by root and we're not root."""
+    if os.geteuid() == 0:
+        return False
+    venv_dir = os.path.dirname(os.path.dirname(sys.executable))
+    try:
+        return os.stat(venv_dir).st_uid == 0
+    except OSError:
+        return False
+
+
 def _do_update() -> bool:
     """Run the actual update. Returns True if it worked."""
     import subprocess
@@ -74,6 +85,10 @@ def _do_update() -> bool:
         cmd = [pip_path, "install", "--upgrade", "--quiet", f"git+{REPO_URL}"]
     else:
         cmd = [sys.executable, "-m", "pip", "install", "--upgrade", "--quiet", f"git+{REPO_URL}"]
+
+    # if the venv is root-owned, we need sudo
+    if _needs_sudo():
+        cmd = ["sudo"] + cmd
 
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
