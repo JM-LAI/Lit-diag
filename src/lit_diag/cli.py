@@ -48,10 +48,15 @@ def cli(ctx, version, do_reset, client_flag, staff_flag):
     check_for_update(console)
 
     if ctx.invoked_subcommand is None:
-        # if --staff or --client passed at top level, set the role before shell
         if staff_flag:
             from lit_diag.engine.config import save_role
             save_role(UserRole.STAFF)
+            # staff always runs as root for the full picture
+            from lit_diag.engine.privilege import is_root, sudo_relaunch
+            if not is_root():
+                console.print("  [dim]Staff mode → elevating to root...[/dim]\n")
+                sudo_relaunch(["--staff"])
+                return
         elif client_flag:
             from lit_diag.engine.config import save_role
             save_role(UserRole.CLIENT)
@@ -101,15 +106,23 @@ def run(modules, run_all, client_flag, staff_flag, non_interactive, json_output,
         )
         raise SystemExit(1)
 
-    # pre-flight root check for --all (non-JSON mode); skip when non-interactive
+    # root elevation: staff auto-elevates, client gets prompted
     if run_all and not json_output and not output_file and not non_interactive:
         from lit_diag.engine.privilege import is_root, pre_flight_root_check, sudo_relaunch
         if not is_root():
-            should_proceed = pre_flight_root_check(console)
-            if not should_proceed:
-                role_flag = "--staff" if staff_flag else "--client"
-                sudo_relaunch(["run", "--all", role_flag])
+            if staff_flag:
+                console.print("  [dim]Staff mode → elevating to root...[/dim]\n")
+                sudo_relaunch(["run", "--all", "--staff"])
                 return
+            else:
+                should_proceed = pre_flight_root_check(console)
+                if not should_proceed:
+                    role_flag = "--client" if client_flag else ""
+                    args = ["run", "--all"]
+                    if role_flag:
+                        args.append(role_flag)
+                    sudo_relaunch(args)
+                    return
 
     from lit_diag.engine.runner import run_modules
     from lit_diag.output.formatters import print_report, report_to_json, save_report_json
