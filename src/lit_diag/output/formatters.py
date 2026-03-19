@@ -151,7 +151,10 @@ def print_findings(
             if finding.fix_command:
                 console.print("          [purple4]┌─ What to do ──────────────────────────────────────[/purple4]")
                 console.print(f"          [purple4]│[/purple4]  [green]Quick fix available[/green]")
-                console.print(f"          [purple4]│[/purple4]  [bold]Run:[/bold]  sudo {finding.fix_command}")
+                if not finding.fix_command.startswith("__"):
+                    console.print(f"          [purple4]│[/purple4]  [bold]Run:[/bold]  sudo {finding.fix_command}")
+                else:
+                    console.print(f"          [purple4]│[/purple4]  {finding.fix_description}")
                 console.print(f"          [purple4]│[/purple4]  [bold]Impact:[/bold] {finding.fix_impact}")
                 console.print("          [purple4]└──────────────────────────────────────────────────[/purple4]")
             else:

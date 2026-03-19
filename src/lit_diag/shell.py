@@ -98,6 +98,13 @@ def _print_menu(console: Console) -> None:
     console.print()
 
 
+def _run_dcgm_install(console: Console) -> None:
+    """Run the interactive DCGM installer."""
+    import asyncio
+    from lit_diag.remediation.dcgm_install import install_dcgm
+    asyncio.run(install_dcgm(console))
+
+
 def _collect_fixable_findings(report) -> list[Finding]:
     """Gather all findings that have a fix_command."""
     fixable = []
@@ -124,9 +131,10 @@ def _offer_fixes(console: Console, report) -> None:
         console.print(
             f"  [purple4]│[/purple4]  [bold magenta]{i})[/bold magenta] {f.fix_description}"
         )
-        console.print(
-            f"  [purple4]│[/purple4]     [dim]Run:[/dim]  sudo {f.fix_command}"
-        )
+        if not f.fix_command.startswith("__"):
+            console.print(
+                f"  [purple4]│[/purple4]     [dim]Run:[/dim]  sudo {f.fix_command}"
+            )
         console.print(
             f"  [purple4]│[/purple4]     [dim]Impact:[/dim] {f.fix_impact}"
         )
@@ -162,6 +170,11 @@ def _offer_fixes(console: Console, report) -> None:
             return
 
     for fix in fixes_to_run:
+        # multi-step remediation workflows get their own handler
+        if fix.fix_command == "__dcgm_install__":
+            _run_dcgm_install(console)
+            continue
+
         if fix.fix_requires_root and not is_root():
             if offer_sudo_for_fix(console, fix.fix_command, fix.fix_description, fix.fix_impact):
                 success, output = sudo_run_command(fix.fix_command)

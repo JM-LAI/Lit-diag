@@ -138,6 +138,10 @@ class CUDAModule(BaseDiagnosticModule):
                     "Install datacenter-gpu-manager package from NVIDIA "
                     "repos (apt or yum). Ensure nv-hostengine is running."
                 ),
+                fix_command="__dcgm_install__",
+                fix_description="Install NVIDIA DCGM (datacenter-gpu-manager)",
+                fix_impact="Enables full GPU hardware validation. No downtime.",
+                fix_requires_root=True,
             ))
 
             # fallback: try basic CUDA check via nvidia-smi
